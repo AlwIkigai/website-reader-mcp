@@ -54,20 +54,8 @@ SUMMARIZE_ARTICLE_DESCRIPTION = (
 def create_mcp_server() -> FastMCP:
     settings = get_settings()
 
-    allowed_hosts = settings.mcp_allowed_host_list
-    if allowed_hosts:
-        transport_security = TransportSecuritySettings(
-            enable_dns_rebinding_protection=True,
-            allowed_hosts=allowed_hosts,
-            allowed_origins=settings.mcp_allowed_origin_list,
-        )
-    else:
-        # No explicit host allowlist: the MCP endpoint is already protected by
-        # bearer-token auth (see ApiKeyMiddleware) and is served behind Vercel
-        # with dynamic deployment hostnames, so DNS rebinding host validation
-        # (meant for local browser-facing servers) would only reject valid
-        # production requests with "Invalid Host header".
-        transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
+    # Host allowlisting is enforced in ApiKeyMiddleware (app/auth.py).
+    transport_security = TransportSecuritySettings(enable_dns_rebinding_protection=False)
 
     mcp = FastMCP(
         name=settings.service_name,

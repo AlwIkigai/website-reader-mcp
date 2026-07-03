@@ -10,8 +10,9 @@ os.environ.setdefault("APP_ENV", "test")
 
 @pytest.fixture
 def settings_without_env(monkeypatch):
-    """Build Settings from explicit values, ignoring ALLOWED_DOMAINS from the environment."""
-    monkeypatch.delenv("ALLOWED_DOMAINS", raising=False)
+    """Build Settings from explicit values, ignoring MCP_ALLOWED_HOSTS from the environment."""
+    monkeypatch.delenv("MCP_ALLOWED_HOSTS", raising=False)
+    monkeypatch.delenv("MCP_ALLOWED_ORIGINS", raising=False)
 
     def _build(**overrides) -> Settings:
         payload = {"mcp_api_key": "test-key", **overrides}

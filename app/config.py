@@ -3,7 +3,7 @@ from functools import cached_property, lru_cache
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.services.domain_allowlist import DomainAllowlistError, parse_allowed_domains
+from app.services.host_allowlist import HostAllowlistError, parse_mcp_allowed_hosts
 
 
 class Settings(BaseSettings):
@@ -20,7 +20,6 @@ class Settings(BaseSettings):
     max_response_chars: int = Field(default=12000, alias="MAX_RESPONSE_CHARS")
     max_html_bytes: int = Field(default=2_000_000, alias="MAX_HTML_BYTES")
     allowed_schemes: str = Field(default="https,http", alias="ALLOWED_SCHEMES")
-    allowed_domains: str = Field(default="", alias="ALLOWED_DOMAINS")
     mcp_allowed_hosts: str = Field(default="", alias="MCP_ALLOWED_HOSTS")
     mcp_allowed_origins: str = Field(default="", alias="MCP_ALLOWED_ORIGINS")
 
@@ -33,25 +32,21 @@ class Settings(BaseSettings):
         return {scheme.strip().lower() for scheme in self.allowed_schemes.split(",") if scheme.strip()}
 
     @property
-    def mcp_allowed_host_list(self) -> list[str]:
-        return [host.strip() for host in self.mcp_allowed_hosts.split(",") if host.strip()]
-
-    @property
     def mcp_allowed_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.mcp_allowed_origins.split(",") if origin.strip()]
 
-    @field_validator("allowed_domains")
+    @field_validator("mcp_allowed_hosts")
     @classmethod
-    def validate_allowed_domains(cls, value: str) -> str:
+    def validate_mcp_allowed_hosts(cls, value: str) -> str:
         try:
-            parse_allowed_domains(value)
-        except DomainAllowlistError as exc:
+            parse_mcp_allowed_hosts(value)
+        except HostAllowlistError as exc:
             raise ValueError(str(exc)) from exc
         return value
 
     @cached_property
-    def domain_allowlist(self):
-        return parse_allowed_domains(self.allowed_domains)
+    def mcp_host_allowlist(self):
+        return parse_mcp_allowed_hosts(self.mcp_allowed_hosts)
 
 
 @lru_cache

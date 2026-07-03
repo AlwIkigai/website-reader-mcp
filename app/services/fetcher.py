@@ -5,7 +5,6 @@ from urllib.parse import urlparse
 import httpx
 
 from app.config import Settings, get_settings
-from app.services.domain_allowlist import hostname_matches_allowlist
 
 BLOCKED_HOSTNAMES = {
     "localhost",
@@ -90,17 +89,6 @@ def _try_parse_ip(hostname: str) -> ipaddress.IPv4Address | ipaddress.IPv6Addres
         return None
 
 
-def _enforce_domain_allowlist(hostname: str, settings: Settings) -> None:
-    allowlist = settings.domain_allowlist
-    if not allowlist.is_restrictive:
-        return
-
-    if hostname_matches_allowlist(hostname, allowlist):
-        return
-
-    raise URLValidationError("Domain is not on the allowlist.")
-
-
 def validate_url(url: str, settings: Settings | None = None) -> ValidatedURL:
     """Validate a URL and reject unsafe targets before fetching.
 
@@ -135,8 +123,6 @@ def validate_url(url: str, settings: Settings | None = None) -> ValidatedURL:
         if _is_blocked_ip(ip_address):
             raise URLValidationError("Private, loopback, and internal IP addresses are not allowed.")
 
-    _enforce_domain_allowlist(normalized_host, settings)
-
     if not parsed.netloc:
         raise URLValidationError("Malformed URL.")
 
@@ -161,11 +147,6 @@ async def fetch_url_content(url: str, settings: Settings | None = None) -> Fetch
             headers=headers,
         ) as client:
             async with client.stream("GET", validated.url) as response:
-                try:
-                    final_validated = validate_url(str(response.url), settings)
-                except URLValidationError as exc:
-                    raise FetchError(str(exc)) from exc
-
                 content_type = response.headers.get("content-type", "application/octet-stream")
                 media_type = content_type.split(";", 1)[0].strip().lower()
 
@@ -195,7 +176,7 @@ async def fetch_url_content(url: str, settings: Settings | None = None) -> Fetch
 
                 return FetchResponse(
                     url=validated.url,
-                    final_url=final_validated.url,
+                    final_url=str(response.url),
                     status_code=response.status_code,
                     content_type=content_type,
                     body=body,

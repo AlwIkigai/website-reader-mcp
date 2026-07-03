@@ -52,7 +52,10 @@ REQUEST_TIMEOUT_SECONDS=12
 MAX_RESPONSE_CHARS=12000
 MAX_HTML_BYTES=2000000
 ALLOWED_SCHEMES=https,http
-ALLOWED_DOMAINS=*
+
+# MCP client host allowlist (see .env.example)
+MCP_ALLOWED_HOSTS=
+MCP_ALLOWED_ORIGINS=
 
 HOST=0.0.0.0
 PORT=8001
@@ -413,7 +416,7 @@ Use the same API key headers as in local development.
 - The MCP endpoint is protected by a single static API key. Rotate the key if it is exposed.
 - Local HTTPS uses self-signed certificates. Do not reuse them outside local development.
 - SSRF protection blocks localhost, common internal hostnames, and private/link-local/multicast IP literals before fetching.
-- **Domain allowlist** (`ALLOWED_DOMAINS`): by default empty (deny all). Set `*` to allow any public domain, list exact hosts (`example.com`), and/or subdomain wildcards (`*.example.com`). Hostnames are normalized with IDNA before matching; IP literals never match a restrictive allowlist. Redirect targets are re-validated against the allowlist.
+- **MCP host allowlist** (`MCP_ALLOWED_HOSTS`): optional restriction on which `Host` header values may access `/mcp` (in addition to the API key). Leave empty to disable. Set `*` to allow any host, list exact hosts (`example.com`), subdomain wildcards (`*.example.com`), or port wildcards for local dev (`localhost:*`). Optional `MCP_ALLOWED_ORIGINS` restricts browser `Origin` headers when set.
 - DNS resolution is **not** yet validated against resolved private IPs (see TODO in `app/services/fetcher.py`).
 - Only `http` and `https` URLs are allowed.
 - Responses are capped by `MAX_HTML_BYTES` while downloading and `MAX_RESPONSE_CHARS` (or `max_chars`) for returned text.
@@ -426,13 +429,13 @@ Use the same API key headers as in local development.
 app/
   main.py              FastAPI app, health routes, MCP mount
   config.py            Environment settings
-  auth.py              API key middleware
+  auth.py              API key and MCP host allowlist middleware
   schemas.py           Response models
   tools/
     website_reader.py  MCP tool registration (all five tools)
   services/
     fetcher.py             HTTP fetch + URL validation (SSRF checks)
-    domain_allowlist.py    ALLOWED_DOMAINS parsing and hostname matching
+    host_allowlist.py      MCP_ALLOWED_HOSTS parsing and Host-header matching
     extractor.py           HTML to readable text (BeautifulSoup, used by fetch_url)
     markdown_extractor.py  HTML to Markdown (trafilatura + BeautifulSoup fallback)
     metadata_extractor.py  Metadata (Open Graph, Twitter, JSON-LD, meta tags)

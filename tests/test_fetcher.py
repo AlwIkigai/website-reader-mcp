@@ -31,10 +31,9 @@ def test_validate_url_rejects_unsafe_or_invalid_urls(url: str):
         validate_url(url)
 
 
-def test_validate_url_accepts_public_http_and_https(settings_without_env):
-    settings = settings_without_env(allowed_domains="*")
-    http = validate_url("http://example.com", settings)
-    https = validate_url("https://example.org/path", settings)
+def test_validate_url_accepts_public_http_and_https():
+    http = validate_url("http://example.com")
+    https = validate_url("https://example.org/path")
 
     assert http.scheme == "http"
     assert https.scheme == "https"
