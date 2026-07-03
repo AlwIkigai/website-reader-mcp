@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     max_html_bytes: int = Field(default=2_000_000, alias="MAX_HTML_BYTES")
     allowed_schemes: str = Field(default="https,http", alias="ALLOWED_SCHEMES")
     allowed_domains: str = Field(default="", alias="ALLOWED_DOMAINS")
+    mcp_allowed_hosts: str = Field(default="", alias="MCP_ALLOWED_HOSTS")
+    mcp_allowed_origins: str = Field(default="", alias="MCP_ALLOWED_ORIGINS")
 
     user_agent: str = "WebsiteReaderMCP/0.1"
     max_redirects: int = 5
@@ -29,6 +31,14 @@ class Settings(BaseSettings):
     @property
     def allowed_scheme_set(self) -> set[str]:
         return {scheme.strip().lower() for scheme in self.allowed_schemes.split(",") if scheme.strip()}
+
+    @property
+    def mcp_allowed_host_list(self) -> list[str]:
+        return [host.strip() for host in self.mcp_allowed_hosts.split(",") if host.strip()]
+
+    @property
+    def mcp_allowed_origin_list(self) -> list[str]:
+        return [origin.strip() for origin in self.mcp_allowed_origins.split(",") if origin.strip()]
 
     @field_validator("allowed_domains")
     @classmethod
