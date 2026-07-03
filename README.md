@@ -459,3 +459,7 @@ Possible follow-ups:
 - add an MCP client inside the existing AI Chat backend
 - add tools for `search_web` and `read_url`
 - validate DNS-resolved IPs before fetching (stronger SSRF protection)
+
+## License
+
+Licensed under the MIT License. See [LICENSE](LICENSE).
