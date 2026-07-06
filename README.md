@@ -10,6 +10,7 @@ A small production-ready [Model Context Protocol (MCP)](https://modelcontextprot
 - Protects the MCP endpoint with a static API key
 - Provides a small content extraction pipeline: raw fetch, Markdown, article extraction, metadata and summary preparation
 - Caches successful URL fetches (opt-in via `CACHE_ENABLED`; in-memory or Redis backend) to avoid duplicate downloads across tools
+- Rate-limits outbound URL fetches per client (opt-in via `RATE_LIMIT_ENABLED`; API key + IP composite key; in-memory or Redis backend)
 
 ## Tools
 
@@ -65,6 +66,12 @@ CACHE_TTL_SECONDS=300
 CACHE_MAX_ENTRIES=100
 REDIS_URL=
 
+# Fetch rate limiting (disabled by default)
+RATE_LIMIT_ENABLED=false
+RATE_LIMIT_BACKEND=memory
+RATE_LIMIT_PER_MINUTE=15
+RATE_LIMIT_PER_HOUR=120
+
 HOST=0.0.0.0
 PORT=8001
 DEV_HTTPS=true
@@ -87,6 +94,22 @@ Caching is **off by default**. Set `CACHE_ENABLED=true` to cache successful HTTP
 | `REDIS_URL` | *(empty)* | Required when `CACHE_BACKEND=redis` (e.g. Upstash) |
 
 Only successful fetches are cached; errors and validation failures are not. Tests run with caching disabled.
+
+### Fetch rate limiting
+
+Rate limiting is **off by default**. Set `RATE_LIMIT_ENABLED=true` to cap how many outbound URL fetches each client can perform in a time window. Limits apply at the fetch layer (shared by all tools) and only count **cache misses** — cached responses do not consume quota.
+
+Each client is identified by a composite key of **hashed API key + client IP** (the raw key is never stored in Redis). On Vercel, the client IP is taken from `x-vercel-forwarded-for` or `x-forwarded-for` when present.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `RATE_LIMIT_ENABLED` | `false` | Enable or disable fetch rate limiting |
+| `RATE_LIMIT_BACKEND` | `memory` | `memory` for local/single-instance; `redis` for shared limits on Vercel |
+| `RATE_LIMIT_PER_MINUTE` | `15` | Max URL fetches per client per minute (burst protection) |
+| `RATE_LIMIT_PER_HOUR` | `120` | Max URL fetches per client per hour (sustained cap) |
+| `REDIS_URL` | *(empty)* | Required when `RATE_LIMIT_BACKEND=redis` (e.g. Upstash; can be shared with the URL cache) |
+
+When a client exceeds a limit, tools return a structured error such as `Rate limit exceeded. Retry after N seconds.` instead of fetching the URL.
 
 ## Create local HTTPS certs
 
@@ -420,7 +443,7 @@ pytest
 
 1. Push this repository to GitHub.
 2. Import the project in Vercel.
-3. Set environment variables in the Vercel dashboard (at minimum `MCP_API_KEY`).
+3. Set environment variables in the Vercel dashboard (at minimum `MCP_API_KEY`; for production, also consider `RATE_LIMIT_ENABLED=true`, `RATE_LIMIT_BACKEND=redis`, and `REDIS_URL`).
 4. Deploy.
 
 The included `vercel.json` routes all requests to `app/main.py`, which exports the ASGI `app` object required by `@vercel/python`. Vercel terminates HTTPS for you in production; the local cert files are not used there.
@@ -442,8 +465,9 @@ Use the same API key headers as in local development.
 - DNS resolution is **not** yet validated against resolved private IPs (see TODO in `app/services/fetcher.py`).
 - Only `http` and `https` URLs are allowed.
 - Responses are capped by `MAX_HTML_BYTES` while downloading and `MAX_RESPONSE_CHARS` (or `max_chars`) for returned text.
+- **Fetch rate limiting** (`RATE_LIMIT_ENABLED`): optional per-client caps on outbound URL fetches (API key hash + IP). Use Redis on Vercel so limits are shared across serverless instances. Cached responses do not count toward the limit.
 - No JavaScript rendering: pages that require a browser will not be fully readable.
-- No crawling or rate limiting yet.
+- No crawling: each tool fetches a single URL per call.
 
 ## Project structure
 
@@ -454,6 +478,7 @@ app/
   auth.py              API key and MCP host allowlist middleware
   schemas.py           Response models
   cache/               URL fetch cache (noop, memory, Redis backends)
+  ratelimit/           Fetch rate limiting (noop, memory, Redis backends)
   tools/
     website_reader.py  MCP tool registration (all five tools)
   services/
@@ -469,6 +494,7 @@ scripts/
 tests/
   test_fetcher.py
   test_cache.py
+  test_ratelimit.py
   test_extractor.py
   test_extract_article.py
   test_markdown.py
@@ -480,7 +506,6 @@ tests/
 
 Possible follow-ups:
 
-- add rate limiting
 - add logging and request IDs
 - add an MCP client inside the existing AI Chat backend
 - add tools for `search_web` and `read_url`

@@ -7,6 +7,7 @@ from app.config import Settings
 os.environ.setdefault("MCP_API_KEY", "test-key")
 os.environ.setdefault("APP_ENV", "test")
 os.environ.setdefault("CACHE_ENABLED", "false")
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
 
 
 @pytest.fixture

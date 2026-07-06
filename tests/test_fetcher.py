@@ -2,6 +2,9 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.cache import reset_url_cache
+from app.ratelimit import reset_rate_limiter
+from app.ratelimit.client_id import build_client_id
+from app.ratelimit.context import client_id_ctx
 from app.services.fetch_types import FetchResponse
 from app.services.fetcher import FetchError, URLValidationError, fetch_url_content, validate_url
 
@@ -74,8 +77,10 @@ def _mock_httpx_client(response: MagicMock) -> MagicMock:
 @pytest.fixture(autouse=True)
 def _reset_cache():
     reset_url_cache()
+    reset_rate_limiter()
     yield
     reset_url_cache()
+    reset_rate_limiter()
 
 
 @pytest.mark.asyncio
@@ -150,3 +155,55 @@ async def test_memory_cache_round_trip():
     cached = await cache.get("https://example.com")
 
     assert cached == entry
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_content_enforces_rate_limit(settings_without_env):
+    settings = settings_without_env(
+        rate_limit_enabled=True,
+        rate_limit_backend="memory",
+        rate_limit_per_minute=1,
+        rate_limit_per_hour=100,
+    )
+    response = _mock_httpx_response()
+    client_cm = _mock_httpx_client(response)
+    client_id = build_client_id("test-key", "203.0.113.10")
+    token = client_id_ctx.set(client_id)
+
+    try:
+        with patch("app.services.fetcher.httpx.AsyncClient", return_value=client_cm):
+            await fetch_url_content("https://example.com/page", settings)
+
+            with pytest.raises(FetchError, match="Rate limit exceeded"):
+                await fetch_url_content("https://example.com/other", settings)
+    finally:
+        client_id_ctx.reset(token)
+
+    assert client_cm.__aenter__.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_url_content_skips_rate_limit_for_cache_hits(settings_without_env):
+    settings = settings_without_env(
+        cache_enabled=True,
+        cache_backend="memory",
+        cache_ttl_seconds=60,
+        cache_max_entries=10,
+        rate_limit_enabled=True,
+        rate_limit_backend="memory",
+        rate_limit_per_minute=1,
+        rate_limit_per_hour=100,
+    )
+    response = _mock_httpx_response()
+    client_cm = _mock_httpx_client(response)
+    client_id = build_client_id("test-key", "203.0.113.10")
+    token = client_id_ctx.set(client_id)
+
+    try:
+        with patch("app.services.fetcher.httpx.AsyncClient", return_value=client_cm):
+            await fetch_url_content("https://example.com/page", settings)
+            await fetch_url_content("https://example.com/page", settings)
+    finally:
+        client_id_ctx.reset(token)
+
+    assert client_cm.__aenter__.await_count == 1

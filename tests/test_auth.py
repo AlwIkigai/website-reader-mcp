@@ -1,8 +1,11 @@
 import pytest
 from starlette.requests import Request
+from starlette.responses import JSONResponse
 
-from app.auth import is_allowed_mcp_client, is_valid_api_key
+from app.auth import ApiKeyMiddleware, is_allowed_mcp_client, is_valid_api_key
 from app.config import Settings
+from app.ratelimit.client_id import build_client_id, get_client_ip
+from app.ratelimit.context import client_id_ctx
 
 
 def _request(
@@ -69,3 +72,36 @@ def test_api_key_validation(settings_without_env):
 
     assert is_valid_api_key(_request(api_key="test-key"), settings) is True
     assert is_valid_api_key(_request(api_key="wrong"), settings) is False
+
+
+def test_build_client_id_uses_api_key_and_ip_from_request(settings_without_env):
+    request = _request(api_key="test-key")
+
+    client_id = build_client_id("test-key", get_client_ip(request))
+
+    assert client_id.endswith(":127.0.0.1")
+    assert "test-key" not in client_id
+
+
+@pytest.mark.asyncio
+async def test_middleware_sets_client_id_context():
+    observed: list[str] = []
+
+    async def call_next(request):
+        from app.ratelimit.context import get_client_id
+
+        observed.append(get_client_id())
+        return JSONResponse({"ok": True})
+
+    middleware = ApiKeyMiddleware(app=object())
+    request = _request(api_key="test-key")
+    token = client_id_ctx.set("stale")
+    try:
+        response = await middleware.dispatch(request, call_next)
+    finally:
+        client_id_ctx.reset(token)
+
+    assert response.status_code == 200
+    assert len(observed) == 1
+    assert observed[0].endswith(":127.0.0.1")
+    assert observed[0] != "stale"

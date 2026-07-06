@@ -3,6 +3,8 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from app.config import Settings, get_settings
+from app.ratelimit.client_id import build_client_id, get_client_ip
+from app.ratelimit.context import client_id_ctx
 from app.services.host_allowlist import host_header_matches_allowlist
 
 
@@ -70,5 +72,12 @@ class ApiKeyMiddleware(BaseHTTPMiddleware):
 
             if not is_valid_api_key(request):
                 return JSONResponse(status_code=401, content={"detail": "Unauthorized"})
+
+            client_id = build_client_id(extract_api_key(request), get_client_ip(request))
+            token = client_id_ctx.set(client_id)
+            try:
+                return await call_next(request)
+            finally:
+                client_id_ctx.reset(token)
 
         return await call_next(request)

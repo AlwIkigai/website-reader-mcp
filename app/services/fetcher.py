@@ -5,6 +5,9 @@ import httpx
 
 from app.cache import get_url_cache
 from app.config import Settings, get_settings
+from app.ratelimit import get_rate_limiter
+from app.ratelimit.base import RateLimitExceeded
+from app.ratelimit.context import get_client_id
 from app.services.fetch_types import FetchResponse, ValidatedURL
 
 BLOCKED_HOSTNAMES = {
@@ -127,6 +130,13 @@ async def fetch_url_content(url: str, settings: Settings | None = None) -> Fetch
         cached = await cache.get(validated.url)
         if cached is not None:
             return cached
+
+    if settings.rate_limit_enabled:
+        limiter = get_rate_limiter(settings)
+        try:
+            await limiter.acquire(get_client_id())
+        except RateLimitExceeded as exc:
+            raise FetchError(str(exc)) from exc
 
     headers = {"User-Agent": settings.user_agent}
 
