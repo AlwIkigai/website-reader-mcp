@@ -22,8 +22,13 @@ class Settings(BaseSettings):
     allowed_schemes: str = Field(default="https,http", alias="ALLOWED_SCHEMES")
     mcp_allowed_hosts: str = Field(default="", alias="MCP_ALLOWED_HOSTS")
     mcp_allowed_origins: str = Field(default="", alias="MCP_ALLOWED_ORIGINS")
+    cache_enabled: bool = Field(default=False, alias="CACHE_ENABLED")
+    cache_backend: str = Field(default="memory", alias="CACHE_BACKEND")
+    cache_ttl_seconds: int = Field(default=300, alias="CACHE_TTL_SECONDS")
+    cache_max_entries: int = Field(default=100, alias="CACHE_MAX_ENTRIES")
+    redis_url: str = Field(default="", alias="REDIS_URL")
 
-    user_agent: str = "WebsiteReaderMCP/0.1"
+    user_agent: str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15"
     max_redirects: int = 5
     service_name: str = "website-reader-mcp"
 
@@ -34,6 +39,14 @@ class Settings(BaseSettings):
     @property
     def mcp_allowed_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.mcp_allowed_origins.split(",") if origin.strip()]
+
+    @field_validator("cache_backend")
+    @classmethod
+    def validate_cache_backend(cls, value: str) -> str:
+        normalized = value.strip().lower()
+        if normalized not in {"memory", "redis"}:
+            raise ValueError("CACHE_BACKEND must be 'memory' or 'redis'.")
+        return normalized
 
     @field_validator("mcp_allowed_hosts")
     @classmethod

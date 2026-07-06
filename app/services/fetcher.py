@@ -1,10 +1,11 @@
 import ipaddress
-from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import httpx
 
+from app.cache import get_url_cache
 from app.config import Settings, get_settings
+from app.services.fetch_types import FetchResponse, ValidatedURL
 
 BLOCKED_HOSTNAMES = {
     "localhost",
@@ -21,22 +22,6 @@ class URLValidationError(ValueError):
 
 class FetchError(Exception):
     """Raised when a page cannot be fetched."""
-
-
-@dataclass(frozen=True)
-class ValidatedURL:
-    url: str
-    scheme: str
-    hostname: str
-
-
-@dataclass(frozen=True)
-class FetchResponse:
-    url: str
-    final_url: str
-    status_code: int
-    content_type: str
-    body: str
 
 
 def _normalize_hostname(hostname: str) -> str:
@@ -137,6 +122,12 @@ async def fetch_url_content(url: str, settings: Settings | None = None) -> Fetch
     except URLValidationError as exc:
         raise FetchError(str(exc)) from exc
 
+    cache = get_url_cache(settings)
+    if settings.cache_enabled:
+        cached = await cache.get(validated.url)
+        if cached is not None:
+            return cached
+
     headers = {"User-Agent": settings.user_agent}
 
     try:
@@ -174,13 +165,18 @@ async def fetch_url_content(url: str, settings: Settings | None = None) -> Fetch
                 except UnicodeDecodeError:
                     body = body_bytes.decode("utf-8", errors="replace")
 
-                return FetchResponse(
+                fetched = FetchResponse(
                     url=validated.url,
                     final_url=str(response.url),
                     status_code=response.status_code,
                     content_type=content_type,
                     body=body,
                 )
+
+                if settings.cache_enabled:
+                    await cache.set(validated.url, fetched)
+
+                return fetched
     except FetchError:
         raise
     except httpx.TooManyRedirects as exc:
