@@ -1,4 +1,3 @@
-import ipaddress
 from urllib.parse import urlparse
 
 import httpx
@@ -9,78 +8,37 @@ from app.ratelimit import get_rate_limiter
 from app.ratelimit.base import RateLimitExceeded
 from app.ratelimit.context import get_client_id
 from app.services.fetch_types import FetchResponse, ValidatedURL
+from app.ssrf import SSRFProtectedTransport, get_resolver
+from app.ssrf.errors import SSRFError, URLValidationError
+from app.ssrf.ip_rules import (
+    BLOCKED_HOSTNAMES,
+    is_blocked_ip,
+    is_ip_literal,
+    normalize_hostname,
+    try_parse_ip,
+)
 
-BLOCKED_HOSTNAMES = {
-    "localhost",
-    "localhost.localdomain",
-    "metadata.google.internal",
-}
+__all__ = [
+    "FetchError",
+    "SSRFError",
+    "URLValidationError",
+    "fetch_url_content",
+    "validate_url",
+]
 
 SUPPORTED_CONTENT_PREFIXES = ("text/html", "text/plain", "application/xhtml+xml")
-
-
-class URLValidationError(ValueError):
-    """Raised when a URL fails validation or SSRF checks."""
 
 
 class FetchError(Exception):
     """Raised when a page cannot be fetched."""
 
 
-def _normalize_hostname(hostname: str) -> str:
-    return hostname.strip().lower().rstrip(".")
-
-
-def _is_blocked_ip(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    if address.is_loopback:
-        return True
-    if address.is_private:
-        return True
-    if address.is_link_local:
-        return True
-    if address.is_multicast:
-        return True
-    if address.is_reserved:
-        return True
-    if address.is_unspecified:
-        return True
-
-    if isinstance(address, ipaddress.IPv4Address):
-        if address in ipaddress.ip_network("0.0.0.0/8"):
-            return True
-        if address in ipaddress.ip_network("169.254.0.0/16"):
-            return True
-        if address in ipaddress.ip_network("224.0.0.0/4"):
-            return True
-
-    if isinstance(address, ipaddress.IPv6Address):
-        if address in ipaddress.ip_network("fc00::/7"):
-            return True
-        if address in ipaddress.ip_network("fe80::/10"):
-            return True
-
-    return False
-
-
-def _is_ip_literal(hostname: str) -> bool:
-    return _try_parse_ip(hostname) is not None
-
-
-def _try_parse_ip(hostname: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
-    host = hostname
-    if host.startswith("[") and host.endswith("]"):
-        host = host[1:-1]
-
-    try:
-        return ipaddress.ip_address(host)
-    except ValueError:
-        return None
-
-
 def validate_url(url: str, settings: Settings | None = None) -> ValidatedURL:
-    """Validate a URL and reject unsafe targets before fetching.
+    """Validate a URL syntactically and reject obviously unsafe targets.
 
-    TODO: Resolve hostnames via DNS and reject if any resolved IP is private.
+    This is a fast, synchronous pre-flight check (schemes, blocked hostnames, and
+    IP literals). DNS-based validation and connection pinning happen at fetch
+    time via :class:`app.ssrf.SSRFProtectedTransport`.
     """
     settings = settings or get_settings()
     cleaned = url.strip()
@@ -99,16 +57,16 @@ def validate_url(url: str, settings: Settings | None = None) -> ValidatedURL:
     if not hostname:
         raise URLValidationError("URL must include a hostname.")
 
-    normalized_host = _normalize_hostname(hostname)
+    normalized_host = normalize_hostname(hostname)
     if normalized_host in BLOCKED_HOSTNAMES:
         raise URLValidationError("Localhost and internal hostnames are not allowed.")
 
-    if _is_ip_literal(normalized_host):
-        ip_address = _try_parse_ip(normalized_host)
+    if is_ip_literal(normalized_host):
+        ip_address = try_parse_ip(normalized_host)
         if ip_address is None:
             raise URLValidationError("URL contains an invalid IP address.")
 
-        if _is_blocked_ip(ip_address):
+        if is_blocked_ip(ip_address):
             raise URLValidationError("Private, loopback, and internal IP addresses are not allowed.")
 
     if not parsed.netloc:
@@ -140,12 +98,17 @@ async def fetch_url_content(url: str, settings: Settings | None = None) -> Fetch
 
     headers = {"User-Agent": settings.user_agent}
 
+    transport = None
+    if settings.ssrf_dns_validation_enabled:
+        transport = SSRFProtectedTransport(get_resolver(settings))
+
     try:
         async with httpx.AsyncClient(
             follow_redirects=True,
             max_redirects=settings.max_redirects,
             timeout=settings.request_timeout_seconds,
             headers=headers,
+            transport=transport,
         ) as client:
             async with client.stream("GET", validated.url) as response:
                 content_type = response.headers.get("content-type", "application/octet-stream")
@@ -189,6 +152,8 @@ async def fetch_url_content(url: str, settings: Settings | None = None) -> Fetch
                 return fetched
     except FetchError:
         raise
+    except URLValidationError as exc:
+        raise FetchError(str(exc)) from exc
     except httpx.TooManyRedirects as exc:
         raise FetchError("Too many redirects while fetching the URL.") from exc
     except httpx.TimeoutException as exc:

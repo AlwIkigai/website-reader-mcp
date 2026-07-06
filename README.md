@@ -11,6 +11,7 @@ A small production-ready [Model Context Protocol (MCP)](https://modelcontextprot
 - Provides a small content extraction pipeline: raw fetch, Markdown, article extraction, metadata and summary preparation
 - Caches successful URL fetches (opt-in via `CACHE_ENABLED`; in-memory or Redis backend) to avoid duplicate downloads across tools
 - Rate-limits outbound URL fetches per client (opt-in via `RATE_LIMIT_ENABLED`; API key + IP composite key; in-memory or Redis backend)
+- Validates DNS-resolved IPs across multiple resolvers and pins the connection to the vetted IP (on by default via `SSRF_DNS_VALIDATION_ENABLED`) to block SSRF and DNS rebinding
 
 ## Tools
 
@@ -72,6 +73,11 @@ RATE_LIMIT_BACKEND=memory
 RATE_LIMIT_PER_MINUTE=15
 RATE_LIMIT_PER_HOUR=120
 
+# DNS-based SSRF protection (enabled by default)
+SSRF_DNS_VALIDATION_ENABLED=true
+SSRF_DNS_TIMEOUT_SECONDS=2
+SSRF_DNS_RESOLVERS=system,1.1.1.1,1.0.0.1,8.8.8.8,8.8.4.4
+
 HOST=0.0.0.0
 PORT=8001
 DEV_HTTPS=true
@@ -110,6 +116,27 @@ Each client is identified by a composite key of **hashed API key + client IP** (
 | `REDIS_URL` | *(empty)* | Required when `RATE_LIMIT_BACKEND=redis` (e.g. Upstash; can be shared with the URL cache) |
 
 When a client exceeds a limit, tools return a structured error such as `Rate limit exceeded. Retry after N seconds.` instead of fetching the URL.
+
+### DNS-based SSRF protection
+
+Beyond the synchronous checks on URL schemes, blocked hostnames and IP literals, the server performs **DNS-level validation** before every fetch. This is **on by default** and defends against Server-Side Request Forgery (SSRF), including DNS-rebinding attacks.
+
+How it works:
+
+1. **Multi-resolver resolution.** The hostname is resolved concurrently across several independent resolvers — the system resolver plus public resolvers (Cloudflare `1.1.1.1`/`1.0.0.1` and Google `8.8.8.8`/`8.8.4.4`). The union of all A/AAAA answers is validated, so if **any** resolver returns a private/internal address the request is rejected.
+2. **Hardened IP classification.** Resolved IPs are rejected if they fall into loopback, private (RFC1918), link-local (incl. the `169.254.169.254` cloud metadata address), carrier-grade NAT, multicast, reserved, benchmarking or test ranges. IPv6-embedded IPv4 (IPv4-mapped, NAT64, 6to4) is unwrapped and checked too, so a private target cannot be smuggled through an IPv6 encoding.
+3. **Connection pinning (anti-rebinding).** The vetted IP is pinned for the actual connection, so the name cannot resolve to a safe IP during validation and to an internal IP a moment later. The original `Host` header and TLS SNI/certificate verification are preserved against the real hostname.
+4. **Redirects are validated too.** Every redirect hop flows through the same validation and pinning.
+
+**Very low per-query timeouts** are used and resolvers are queried concurrently, so total added latency is bounded by a single timeout window regardless of how many resolvers are configured.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SSRF_DNS_VALIDATION_ENABLED` | `true` | Enable DNS resolution + IP validation + connection pinning |
+| `SSRF_DNS_TIMEOUT_SECONDS` | `2` | Low per-query timeout; resolvers are queried concurrently |
+| `SSRF_DNS_RESOLVERS` | `system,1.1.1.1,1.0.0.1,8.8.8.8,8.8.4.4` | Comma-separated resolvers. `system` uses `/etc/resolv.conf`; others are public resolver IPs |
+
+When a host resolves to a blocked IP (or cannot be resolved), tools return a structured error instead of fetching the URL.
 
 ## Create local HTTPS certs
 
@@ -461,8 +488,8 @@ Use the same API key headers as in local development.
 - The MCP endpoint is protected by a single static API key. Rotate the key if it is exposed.
 - Local HTTPS uses self-signed certificates. Do not reuse them outside local development.
 - SSRF protection blocks localhost, common internal hostnames, and private/link-local/multicast IP literals before fetching.
+- **DNS-based SSRF protection** (`SSRF_DNS_VALIDATION_ENABLED`, on by default): hostnames are resolved across multiple resolvers and rejected if any resolved IP is private/internal (including IPv6-embedded IPv4). The connection is then pinned to the vetted IP to block DNS rebinding, while preserving `Host` and TLS SNI. See [DNS-based SSRF protection](#dns-based-ssrf-protection).
 - **MCP host allowlist** (`MCP_ALLOWED_HOSTS`): optional restriction on which `Host` header values may access `/mcp` (in addition to the API key). Leave empty to disable. Set `*` to allow any host, list exact hosts (`example.com`), subdomain wildcards (`*.example.com`), or port wildcards for local dev (`localhost:*`). Optional `MCP_ALLOWED_ORIGINS` restricts browser `Origin` headers when set.
-- DNS resolution is **not** yet validated against resolved private IPs (see TODO in `app/services/fetcher.py`).
 - Only `http` and `https` URLs are allowed.
 - Responses are capped by `MAX_HTML_BYTES` while downloading and `MAX_RESPONSE_CHARS` (or `max_chars`) for returned text.
 - **Fetch rate limiting** (`RATE_LIMIT_ENABLED`): optional per-client caps on outbound URL fetches (API key hash + IP). Use Redis on Vercel so limits are shared across serverless instances. Cached responses do not count toward the limit.
@@ -479,6 +506,7 @@ app/
   schemas.py           Response models
   cache/               URL fetch cache (noop, memory, Redis backends)
   ratelimit/           Fetch rate limiting (noop, memory, Redis backends)
+  ssrf/                DNS SSRF protection (IP rules, multi-resolver, pinning transport)
   tools/
     website_reader.py  MCP tool registration (all five tools)
   services/
@@ -493,6 +521,7 @@ scripts/
   dev.sh                 Run uvicorn with HTTPS locally
 tests/
   test_fetcher.py
+  test_ssrf.py
   test_cache.py
   test_ratelimit.py
   test_extractor.py
@@ -509,7 +538,6 @@ Possible follow-ups:
 - add logging and request IDs
 - add an MCP client inside the existing AI Chat backend
 - add tools for `search_web` and `read_url`
-- validate DNS-resolved IPs before fetching (stronger SSRF protection)
 
 ## License
 

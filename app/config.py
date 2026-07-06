@@ -32,6 +32,13 @@ class Settings(BaseSettings):
     rate_limit_per_minute: int = Field(default=15, alias="RATE_LIMIT_PER_MINUTE")
     rate_limit_per_hour: int = Field(default=120, alias="RATE_LIMIT_PER_HOUR")
 
+    ssrf_dns_validation_enabled: bool = Field(default=True, alias="SSRF_DNS_VALIDATION_ENABLED")
+    ssrf_dns_timeout_seconds: float = Field(default=2.0, alias="SSRF_DNS_TIMEOUT_SECONDS")
+    ssrf_dns_resolvers: str = Field(
+        default="system,1.1.1.1,1.0.0.1,8.8.8.8,8.8.4.4",
+        alias="SSRF_DNS_RESOLVERS",
+    )
+
     user_agent: str = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15"
     max_redirects: int = 5
     service_name: str = "website-reader-mcp"
@@ -43,6 +50,17 @@ class Settings(BaseSettings):
     @property
     def mcp_allowed_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.mcp_allowed_origins.split(",") if origin.strip()]
+
+    @property
+    def ssrf_dns_resolver_list(self) -> list[str]:
+        resolvers = [item.strip().lower() for item in self.ssrf_dns_resolvers.split(",") if item.strip()]
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for resolver in resolvers:
+            if resolver not in seen:
+                seen.add(resolver)
+                deduped.append(resolver)
+        return deduped or ["system"]
 
     @field_validator("cache_backend")
     @classmethod
@@ -59,6 +77,13 @@ class Settings(BaseSettings):
         if normalized not in {"memory", "redis"}:
             raise ValueError("RATE_LIMIT_BACKEND must be 'memory' or 'redis'.")
         return normalized
+
+    @field_validator("ssrf_dns_timeout_seconds")
+    @classmethod
+    def validate_ssrf_dns_timeout(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("SSRF_DNS_TIMEOUT_SECONDS must be greater than 0.")
+        return value
 
     @field_validator("mcp_allowed_hosts")
     @classmethod
