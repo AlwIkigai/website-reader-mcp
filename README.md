@@ -9,6 +9,7 @@ A small production-ready [Model Context Protocol (MCP)](https://modelcontextprot
 - Exposes MCP at `/mcp` (Streamable HTTP transport)
 - Protects the MCP endpoint with a static API key
 - Provides a small content extraction pipeline: raw fetch, Markdown, article extraction, metadata and summary preparation
+- Caches successful URL fetches (opt-in via `CACHE_ENABLED`; in-memory or Redis backend) to avoid duplicate downloads across tools
 
 ## Tools
 
@@ -57,6 +58,13 @@ ALLOWED_SCHEMES=https,http
 MCP_ALLOWED_HOSTS=
 MCP_ALLOWED_ORIGINS=
 
+# URL fetch cache (disabled by default)
+CACHE_ENABLED=false
+CACHE_BACKEND=memory
+CACHE_TTL_SECONDS=300
+CACHE_MAX_ENTRIES=100
+REDIS_URL=
+
 HOST=0.0.0.0
 PORT=8001
 DEV_HTTPS=true
@@ -65,6 +73,20 @@ SSL_KEYFILE=certs/localhost-key.pem
 ```
 
 The real `.env` file is gitignored and should not be committed.
+
+### URL fetch cache
+
+Caching is **off by default**. Set `CACHE_ENABLED=true` to cache successful HTTP responses at the fetch layer (shared by all tools).
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `CACHE_ENABLED` | `false` | Enable or disable URL fetch caching |
+| `CACHE_BACKEND` | `memory` | `memory` for local/single-instance; `redis` for shared cache on Vercel |
+| `CACHE_TTL_SECONDS` | `300` | How long cached responses are kept |
+| `CACHE_MAX_ENTRIES` | `100` | Max in-memory entries (ignored for Redis) |
+| `REDIS_URL` | *(empty)* | Required when `CACHE_BACKEND=redis` (e.g. Upstash) |
+
+Only successful fetches are cached; errors and validation failures are not. Tests run with caching disabled.
 
 ## Create local HTTPS certs
 
@@ -421,7 +443,7 @@ Use the same API key headers as in local development.
 - Only `http` and `https` URLs are allowed.
 - Responses are capped by `MAX_HTML_BYTES` while downloading and `MAX_RESPONSE_CHARS` (or `max_chars`) for returned text.
 - No JavaScript rendering: pages that require a browser will not be fully readable.
-- No crawling, caching, or rate limiting yet.
+- No crawling or rate limiting yet.
 
 ## Project structure
 
@@ -431,6 +453,7 @@ app/
   config.py            Environment settings
   auth.py              API key and MCP host allowlist middleware
   schemas.py           Response models
+  cache/               URL fetch cache (noop, memory, Redis backends)
   tools/
     website_reader.py  MCP tool registration (all five tools)
   services/
@@ -445,6 +468,7 @@ scripts/
   dev.sh                 Run uvicorn with HTTPS locally
 tests/
   test_fetcher.py
+  test_cache.py
   test_extractor.py
   test_extract_article.py
   test_markdown.py
@@ -456,7 +480,6 @@ tests/
 
 Possible follow-ups:
 
-- add caching
 - add rate limiting
 - add logging and request IDs
 - add an MCP client inside the existing AI Chat backend
