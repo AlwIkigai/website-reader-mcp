@@ -1,5 +1,15 @@
 # Website Reader MCP
 
+## About this AlwIkigai import
+
+This repository is an **independent public import** of [Website Reader MCP by Nico Puhlmann](https://github.com/nipuman/website-reader-mcp). All credit for the original project and implementation goes to Nico and the original contributors. This is not a GitHub fork, an official continuation, or a project endorsed by the upstream author.
+
+The AlwIkigai copy is maintained separately for **learning, code review, and experimentation with MCP and webpage extraction**. Importing the code does not mean it has been deployed, security-audited, or integrated into another project. For original updates and issues, see the [upstream repository](https://github.com/nipuman/website-reader-mcp).
+
+The original README documentation is preserved below. The original **MIT license and copyright notice** are retained in [LICENSE](LICENSE).
+
+---
+
 A small production-ready [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server built with Python and FastAPI. It exposes **Website Reader** tools over **Streamable HTTP** so an AI chat backend can fetch public webpages and receive cleaned, readable text.
 
 ## What it does
